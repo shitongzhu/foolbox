@@ -953,12 +953,11 @@ class IterativeProjectedGradientBaseAttack(Attack):
                                     self.BASE_EVAL_HTML_DIR + '/original_' + original_domain + '.html'
                                 )
                                 os.system(cmd)
-                                if success:
-                                    cmd = "cp %s %s" % (
-                                        self.BASE_HTML_DIR + '/modified_NA_' + original_domain + '.html',
-                                        self.BASE_EVAL_HTML_DIR + '/' + original_domain + '_' + url_id + '.html'
-                                    )
-                                    os.system(cmd)
+                                cmd = "cp %s %s" % (
+                                    self.BASE_HTML_DIR + '/modified_NA_' + original_domain + '.html',
+                                    self.BASE_EVAL_HTML_DIR + '/' + original_domain + '_' + url_id + '.html'
+                                )
+                                os.system(cmd)
 
                                 return True
 
