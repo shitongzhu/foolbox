@@ -371,14 +371,10 @@ class IterativeProjectedGradientBaseAttack(Attack):
             reversed[feature_id] = feature_name
         return reversed
 
-    def _read_curr_html(self, domain, read_modified):
+    def _read_original_html(self, domain):
         print("Reading HTML: %s" % domain)
-        if read_modified:
-            with open(self.BASE_CRAWLED_DIR + "/modified_" + domain + '.html', "r") as fin:
-                curr_html = BeautifulSoup(fin, features="html.parser")
-        else:
-            with open(self.BASE_CRAWLED_DIR + "/" + domain + '.html', "r") as fin:
-                curr_html = BeautifulSoup(fin, features="html.parser")
+        with open(self.BASE_CRAWLED_DIR + "/" + domain + '.html', "r") as fin:
+            curr_html = BeautifulSoup(fin, features="html.parser")
         
         return curr_html, domain + '.html'
     
@@ -417,12 +413,13 @@ class IterativeProjectedGradientBaseAttack(Attack):
         url_id, 
         diff,
         browser_id,
+        strategy,
         working_dir="~/AdGraphAPI/scripts", 
         feature_idx_map=None, 
-        first_time=False
+        first_time=False,
     ):
         reversed_feature_idx_map = self._reverse_a_map(feature_idx_map)
-        html, html_fname = self._read_curr_html(domain, read_modified=False)
+        html, html_fname = self._read_original_html(domain)
         
         if first_time:
             if not os.path.isfile(self.BASE_TIMELINE_DIR + '/' + domain + '.json'):
@@ -446,7 +443,8 @@ class IterativeProjectedGradientBaseAttack(Attack):
                 html=html, 
                 url=url, 
                 delta=delta,
-                domain=final_domain
+                domain=final_domain,
+                strategy=strategy
             )
 
             if new_html is None:
@@ -465,9 +463,10 @@ class IterativeProjectedGradientBaseAttack(Attack):
             domain, 
             url_id, 
             html, 
-            html_fname, 
+            html_fname,
+            strategy,
             working_dir=working_dir, 
-            browser_id=browser_id, 
+            browser_id=browser_id,
             final_domain=final_domain
         )
 
@@ -606,6 +605,14 @@ class IterativeProjectedGradientBaseAttack(Attack):
             strict = True  # we don't care about the bounds because we are not attacking image clf
 
         success_cent = False
+        success_dist = False
+        success = False
+        diverse_strategy = False
+
+        for feature_id in list(perturbable_idx_set):
+            if feature_id < 300:
+                diverse_strategy = True
+                break
 
         if enforce_interval == iterations - 1:
             only_post_process = True
@@ -694,44 +701,116 @@ class IterativeProjectedGradientBaseAttack(Attack):
                 print("URL ID: %s" % url_id)
                 x_before_mapping_back = x.copy()
                 try:
-                    x_cent, unnorm_x_cent, original_url, url = self._get_x_after_mapping_back(
-                        original_domain, 
-                        final_domain,
-                        url_id, 
-                        diff, 
-                        browser_id=browser_id, 
-                        feature_idx_map=feature_idx_map, 
-                        first_time=is_first_iter
-                    )
+                    if diverse_strategy:
+                        x_cent, unnorm_x_cent, original_url_cent, url_cent = self._get_x_after_mapping_back(
+                            original_domain, 
+                            final_domain,
+                            url_id, 
+                            diff, 
+                            browser_id=browser_id, 
+                            strategy='Centralized',
+                            feature_idx_map=feature_idx_map, 
+                            first_time=is_first_iter,
+                        )
+                        x_dist, unnorm_x_dist, original_url_dist, url_dist = self._get_x_after_mapping_back(
+                            original_domain, 
+                            final_domain,
+                            url_id, 
+                            diff, 
+                            browser_id=browser_id, 
+                            strategy='Distributed',
+                            feature_idx_map=feature_idx_map, 
+                            first_time=is_first_iter,
+                        )
+                    else:
+                        x, unnorm_x, original_url, url = self._get_x_after_mapping_back(
+                            original_domain, 
+                            final_domain,
+                            url_id, 
+                            diff, 
+                            browser_id=browser_id, 
+                            strategy='NA',
+                            feature_idx_map=feature_idx_map, 
+                            first_time=is_first_iter,
+                        )
                 except Exception as err:
                     print("Error occured mapping: %s" % err)
                     return False
                 is_first_iter = False
-
-                del unnorm_x_cent[-1]  # remove label
                 
-                for j in range(len(x_cent)):
-                    if j in diff:
-                        if j not in NORM_MAP:
-                            continue
-                        if diff[j] == 1.0:
-                            x_cent[j] = 1.0
-                            unnorm_x_cent[NORM_MAP[j]] = "1"
-                        if diff[j] == -1.0:
-                            x_cent[j] = 0.0
-                            unnorm_x_cent[NORM_MAP[j]] = "0"
+                if diverse_strategy:
+                    del unnorm_x_cent[-1]  # remove label
+                    del unnorm_x_dist[-1]  # remove label
+                    
+                    for j in range(len(x_cent)):
+                        if j in diff:
+                            if j not in NORM_MAP:
+                                continue
+                            if diff[j] == 1.0:
+                                x_cent[j] = 1.0
+                                unnorm_x_cent[NORM_MAP[j]] = "1"
+                            if diff[j] == -1.0:
+                                x_cent[j] = 0.0
+                                unnorm_x_cent[NORM_MAP[j]] = "0"
+                    for j in range(len(x_dist)):
+                        if j in diff:
+                            if j not in NORM_MAP:
+                                continue
+                            if diff[j] == 1.0:
+                                x_dist[j] = 1.0
+                                unnorm_x_dist[NORM_MAP[j]] = "1"
+                            if diff[j] == -1.0:
+                                x_dist[j] = 0.0
+                                unnorm_x_dist[NORM_MAP[j]] = "0"
 
-                print("unnorm_x_cent:", unnorm_x_cent)
-                mapping_diff = self._get_diff(
-                    x_cent,
-                    original,
-                    perturbable_idx_set,
-                    normalization_ratios,
-                )
-                print("Delta between before and after mapping-back: %s" % mapping_diff)
-                if self._is_diff_zero(mapping_diff):
-                    print("[ERROR] Xs before and after mapping back did not change!")
-                    return False
+                    print("unnorm_x_cent:", unnorm_x_cent)
+                    mapping_diff_cent = self._get_diff(
+                        x_cent,
+                        original,
+                        perturbable_idx_set,
+                        normalization_ratios,
+                    )
+                    print("Delta between before and after mapping-back (cent): %s" % mapping_diff_cent)
+                    if self._is_diff_zero(mapping_diff_cent):
+                        print("[ERROR] Xs before and after mapping back did not change (cent)!")
+                        return False
+                
+                    print("unnorm_x_dist:", unnorm_x_dist)
+                    mapping_diff_dist = self._get_diff(
+                        x_dist,
+                        original,
+                        perturbable_idx_set,
+                        normalization_ratios,
+                    )
+                    print("Delta between before and after mapping-back (dist): %s" % mapping_diff_dist)
+                    if self._is_diff_zero(mapping_diff_dist):
+                        print("[ERROR] Xs before and after mapping back did not change (dist)!")
+                        return False
+                else:
+                    del unnorm_x[-1]
+                    
+                    for j in range(len(x)):
+                        if j in diff:
+                            if j not in NORM_MAP:
+                                continue
+                            if diff[j] == 1.0:
+                                x[j] = 1.0
+                                unnorm_x[NORM_MAP[j]] = "1"
+                            if diff[j] == -1.0:
+                                x[j] = 0.0
+                                unnorm_x[NORM_MAP[j]] = "0"
+
+                    print("unnorm_x:", unnorm_x)
+                    mapping_diff = self._get_diff(
+                        x,
+                        original,
+                        perturbable_idx_set,
+                        normalization_ratios,
+                    )
+                    print("Delta between before and after mapping-back: %s" % mapping_diff)
+                    if self._is_diff_zero(mapping_diff):
+                        print("[ERROR] Xs before and after mapping back did not change (cent)!")
+                        return False
 
             if should_enforce_policy and remote_model and not map_back_mode:
                 unnorm_x = self._deprocess_x(x, normalization_ratios)
@@ -765,25 +844,50 @@ class IterativeProjectedGradientBaseAttack(Attack):
                 # features in a "legitimate" fashion
                 if remote_model:
                     if map_back_mode:
-                        prediction_remote_cent = predict(unnorm_x_cent, self._remote_model)[0]
+                        if diverse_strategy:
+                            prediction_remote_cent = predict(unnorm_x_cent, self._remote_model)[0]
+                            prediction_remote_dist = predict(unnorm_x_dist, self._remote_model)[0]
+                        else:
+                            prediction_remote = predict(unnorm_x, self._remote_model)[0]
                     else:
                         prediction_remote = predict(unnorm_x, self._remote_model)[0]
                     prediction_original = predict(unnorm_unperturbed, self._remote_model)[0]
                     if map_back_mode:
-                        prediction_local_cent = self._get_label(model.predict(np.array([x_cent]))[0])
+                        if diverse_strategy:
+                            prediction_local_cent = self._get_label(model.predict(np.array([x_cent]))[0])
+                            prediction_local_dist = self._get_label(model.predict(np.array([x_dist]))[0])
+                        else:
+                            prediction_local = self._get_label(model.predict(np.array([x]))[0])
                     else:
                         prediction_local = self._get_label(model.predict(np.array([x]))[0])
 
                     if not only_post_process:
                         if map_back_mode:
-                            retrain_cnt_cent = 0
-                            print("Remote (cent): %s / local (cent): %s" %
-                                  (prediction_remote_cent, prediction_local_cent))
-                            while prediction_remote_cent != prediction_local_cent and retrain_cnt_cent < 10:
-                                retrain_cnt_cent += 1
-                                self._retrain_local_model(model, x_cent, LABLE[prediction_remote_cent])
-                                prediction_local = self._get_label(model.predict(np.array([x_cent]))[0])
-                                print("(cent) iter #%d, has retrained %d time(s)" % (i, retrain_cnt_cent))
+                            if diverse_strategy:
+                                retrain_cnt_cent, retrain_cnt_dist = 0, 0
+                                print("Remote (cent): %s / local (cent): %s" %
+                                    (prediction_remote_cent, prediction_local_cent))
+                                print("Remote (dist): %s / local (dist): %s" %
+                                    (prediction_remote_dist, prediction_local_dist))
+                                while prediction_remote_cent != prediction_local_cent and retrain_cnt_cent < 10:
+                                    retrain_cnt_cent += 1
+                                    self._retrain_local_model(model, x_cent, LABLE[prediction_remote_cent])
+                                    prediction_local = self._get_label(model.predict(np.array([x_cent]))[0])
+                                    print("(cent) iter #%d, has retrained %d time(s)" % (i, retrain_cnt_cent))
+                                while prediction_remote_dist != prediction_local_dist and retrain_cnt_dist < 10:
+                                    retrain_cnt_dist += 1
+                                    self._retrain_local_model(model, x_dist, LABLE[prediction_remote_dist])
+                                    prediction_local = self._get_label(model.predict(np.array([x_dist]))[0])
+                                    print("(dist) iter #%d, has retrained %d time(s)" % (i, retrain_cnt_dist))
+                            else:
+                                retrain_cnt = 0
+                                print("Remote: %s / local: %s" %
+                                    (prediction_remote, prediction_local))
+                                while prediction_remote != prediction_local and retrain_cnt < 10:
+                                    retrain_cnt += 1
+                                    self._retrain_local_model(model, x, LABLE[prediction_remote])
+                                    prediction_local = self._get_label(model.predict(np.array([x]))[0])
+                                    print("iter #%d, has retrained %d time(s)" % (i, retrain_cnt))
                         else:
                             retrain_cnt = 0
                             print("Remote: %s / local: %s" % (prediction_remote, prediction_local))
@@ -794,26 +898,70 @@ class IterativeProjectedGradientBaseAttack(Attack):
                                 print("iter #%d, has retrained %d time(s)" % (i, retrain_cnt))
 
                     if map_back_mode:
-                        if prediction_original == "AD" and prediction_remote_cent == "NONAD":
-                            success_cent = True
+                        if diverse_strategy:
+                            if prediction_original == "AD" and prediction_remote_cent == "NONAD":
+                                success_cent = True
+                            if prediction_original == "AD" and prediction_remote_dist == "NONAD":
+                                success_dist = True
+                            if success_cent or success_dist:
+                                success = True
 
-                        if success_cent:
-                            msg = "SUCCESS, iter_%d, %s, %s, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff), url_id, original_url, url)
-                            print(msg)
-                            logger.info(msg)
+                            if success_cent and not success_dist:
+                                msg = "SUCCESS, CENT, iter_%d, %s, %s, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff_cent), url_id, original_url_cent, url_cent)
+                                print(msg)
+                                logger.info(msg)
+                            if success_dist and not success_cent:
+                                msg = "SUCCESS, DIST, iter_%d, %s, %s, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff_dist), url_id, original_url_dist, url_dist)
+                                print(msg)
+                                logger.info(msg)
+                            if success_cent and success_dist:
+                                msg = "SUCCESS, BOTH, iter_%d, %s, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff_cent), str(mapping_diff_dist), url_id)
+                                print(msg)
+                                logger.info(msg)
 
-                            cmd = "cp %s %s" % (
-                                self.BASE_HTML_DIR + '/' + original_domain + '.html',
-                                self.BASE_EVAL_HTML_DIR + '/original_' + original_domain + '.html'
-                            )
-                            os.system(cmd)
+                            if success:
+                                cmd = "cp %s %s" % (
+                                    self.BASE_HTML_DIR + '/' + original_domain + '.html',
+                                    self.BASE_EVAL_HTML_DIR + '/original_' + original_domain + '.html'
+                                )
+                                os.system(cmd)
+                                if success_cent:
+                                    cmd = "cp %s %s" % (
+                                        self.BASE_HTML_DIR + '/modified_Centralized_' + original_domain + '.html',
+                                        self.BASE_EVAL_HTML_DIR + '/' + original_domain + '_' + url_id + '_' + 'cent' + '.html'
+                                    )
+                                    os.system(cmd)
+                                if success_dist:
+                                    cmd = "cp %s %s" % (
+                                        self.BASE_HTML_DIR + '/modified_Distributed_' + original_domain + '.html',
+                                        self.BASE_EVAL_HTML_DIR + '/' + original_domain + '_' + url_id + '_' + 'dist' + '.html'
+                                    )
+                                    os.system(cmd)
 
-                            cmd = "cp %s %s" % (
-                                self.BASE_HTML_DIR + '/modified_' + original_domain + '.html',
-                                self.BASE_EVAL_HTML_DIR + '/' + original_domain + '_' + url_id + '.html'
-                            )
-                            os.system(cmd)
-                            return True
+                                return True
+                        else:
+                            if prediction_original == "AD" and prediction_remote == "NONAD":
+                                success = True
+
+                            if success:
+                                msg = "SUCCESS, N/A, iter_%d, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff), url_id)
+                                print(msg)
+                                logger.info(msg)
+
+                                cmd = "cp %s %s" % (
+                                    self.BASE_HTML_DIR + '/' + original_domain + '.html',
+                                    self.BASE_EVAL_HTML_DIR + '/original_' + original_domain + '.html'
+                                )
+                                os.system(cmd)
+                                if success:
+                                    cmd = "cp %s %s" % (
+                                        self.BASE_HTML_DIR + '/modified_NA_' + original_domain + '.html',
+                                        self.BASE_EVAL_HTML_DIR + '/' + original_domain + '_' + url_id + '.html'
+                                    )
+                                    os.system(cmd)
+
+                                return True
+
 
                         x = x_before_mapping_back
                     else:
@@ -826,7 +974,10 @@ class IterativeProjectedGradientBaseAttack(Attack):
             plt.plot(x_axis, y_l2, linewidth=3)
             plt.plot(x_axis, y_lf, linewidth=3)
             plt.show()
-        msg = "FAIL, iter_%d, %s, %s, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff), url_id, original_url, url)
+        if diverse_strategy:
+            msg = "FAIL, iter_%d, %s, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff_cent), str(mapping_diff_dist), url_id)
+        else:
+            msg = "FAIL, iter_%d, %s, %s, %s, %s" % (i, original_domain, final_domain, str(mapping_diff), url_id)
         print(msg)
         logger.info(msg)
         return False
@@ -863,8 +1014,8 @@ class L2GradientMixin(object):
 
 class LinfinityClippingMixin(object):
     def _clip_perturbation(self, a, perturbation, original, epsilon, feature_defs):
-        _LOCAL_EPSILON = 0.8  # hard-coded for now
-        _LOCAL_FEATURE_IDX_SET = {0, 1}  # hard-coded for now as well
+        _LOCAL_EPSILON = 0.5  # hard-coded for now
+        _LOCAL_FEATURE_IDX_SET = {0, 1, 6, 116, 117, 192, 193, 194, 195}  # hard-coded for now as well
 
         original_perturbation = perturbation.copy()
         min_, max_ = a.bounds()
@@ -874,7 +1025,7 @@ class LinfinityClippingMixin(object):
         for i in range(len(clipped)):
             if feature_defs[i] in {"b", "c"}:
                 clipped[i] = original_perturbation[i]
-            if i in _LOCAL_FEATURE_IDX_SET:
+            elif i in _LOCAL_FEATURE_IDX_SET:
                 s_local = original[i]
                 offset = min(epsilon * s, _LOCAL_EPSILON * s_local)  # use the smaller offset
                 clipped[i] = np.clip([original_perturbation[i]], -offset, offset)[0]

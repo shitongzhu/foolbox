@@ -185,16 +185,16 @@ def get_x_from_features(domain, target_url_id):
     return x_lst
 
 
-def run_cpp_feature_extractor(domain_url, working_dir, parse_modified, browser_id, final_domain):
+def run_cpp_feature_extractor(domain_url, working_dir, parse_modified, browser_id, final_domain, strategy):
     def execute_shell_command(cmd):
         os.system(cmd)
 
     cmd_lst = []
     cmd_lst.append("cd %s" % working_dir)
     if parse_modified:
-        cmd_lst.append("sh test.sh %s parse-mod %d %s" % (domain_url, browser_id, final_domain))
+        cmd_lst.append("sh test.sh %s parse-mod %d %s %s" % (domain_url, browser_id, final_domain, strategy))
     else:
-        cmd_lst.append("sh test.sh %s parse-unmod %d %s" % (domain_url, browser_id, final_domain))
+        cmd_lst.append("sh test.sh %s parse-unmod %d %s %s" % (domain_url, browser_id, final_domain, strategy))
     cmd = ' && '.join(cmd_lst)
     print("Issuing shell command: " + cmd)
     execute_shell_command(cmd)
@@ -204,13 +204,14 @@ def compute_x_after_mapping_back(
     domain_url, 
     url_id, 
     modified_html, 
-    original_html_fname, 
+    original_html_fname,
+    strategy,
     working_dir,
     browser_id,
     final_domain,
 ):
-    write_html(BASE_TIMELINE_DIR + 'html/' + 'modified_' + original_html_fname, modified_html)
-    run_cpp_feature_extractor(domain_url, working_dir, parse_modified=True, browser_id=browser_id, final_domain=final_domain)
+    write_html(BASE_TIMELINE_DIR + 'html/' + 'modified_%s_' % strategy + original_html_fname, modified_html)
+    run_cpp_feature_extractor(domain_url, working_dir, parse_modified=True, browser_id=browser_id, final_domain=final_domain, strategy=strategy)
     new_x = get_x_from_features(domain_url, url_id)
 
     unencoded_feature_def, encoded_feature_def, idx_to_feature_name_map = read_feature_def(
@@ -224,4 +225,5 @@ def compute_x_after_mapping_back(
         BASE_DEF_DIR + "col_stats_for_unnormalization.csv")
     normalized_x = normalize_x(
         one_hot_encoded_x, encoded_feature_def, feature_stats, idx_to_feature_name_map)
+    
     return np.array(normalized_x).astype(np.float), new_x
